@@ -417,66 +417,6 @@ class FileProcessor:
         return extension_map[extension]
     
     
-    def save_uploaded_file(
-        self,
-        file_content: bytes,
-        filename: str
-    ) -> str:
-        """
-        Save uploaded file to disk.
-        
-        Generates unique filename to avoid collisions.
-        
-        Args:
-            file_content: File content as bytes
-            filename: Original filename
-            
-        Returns:
-            Path to saved file
-            
-        Raises:
-            IOError: If file cannot be saved
-        """
-        # Generate unique filename using UUID
-        # This prevents conflicts if multiple users upload same filename
-        unique_filename = f"{uuid.uuid4()}_{filename}"
-        
-        # Create full path
-        file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
-        
-        try:
-            # Write file to disk in binary mode
-            with open(file_path, 'wb') as f:
-                f.write(file_content)
-            
-            logger.info(f"Saved file: {file_path}")
-            return file_path
-            
-        except Exception as e:
-            logger.error(f"Failed to save file: {str(e)}")
-            raise IOError(f"Failed to save file: {str(e)}")
-    
-    
-    def cleanup_file(self, file_path: str) -> None:
-        """
-        Delete a file from disk.
-        
-        Used to cleanup temporary files after processing.
-        
-        Args:
-            file_path: Path to file to delete
-        """
-        try:
-            # Check if file exists before trying to delete
-            if os.path.exists(file_path):
-                # Delete the file
-                os.remove(file_path)
-                logger.info(f"Deleted file: {file_path}")
-        except Exception as e:
-            # Log error but don't raise - cleanup failures shouldn't break flow
-            logger.warning(f"Failed to cleanup file {file_path}: {str(e)}")
-
-
 # ========== Utility Functions ==========
 def get_file_processor() -> FileProcessor:
     """
