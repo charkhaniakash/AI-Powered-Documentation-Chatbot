@@ -256,14 +256,29 @@ class DocumentChatbot:
                     }
                 )
             
-            # Step 3: Generate response with LLM
+            # Step 3: Generate response with LLM (using streaming for real-time output)
             logger.info("Step 3: Generating response...")
-            response = self.llm_service.generate_response(
+            full_answer = ""
+            for chunk in self.llm_service.generate_streaming_response(
                 query=original_query,  # Use original query for answer generation
                 context_chunks=retrieved_chunks,
                 conversation_history=None
+            ):
+                print(chunk, end='', flush=True)  # Print chunks in real-time for demo
+                full_answer += chunk
+            
+            # Reconstruct QueryResponse for consistency (streaming doesn't return full object)
+            # Note: Confidence and metadata are approximated here for demo purposes
+            response = QueryResponse(
+                answer=full_answer,
+                sources=retrieved_chunks,
+                confidence=0.8,  # Placeholder; in full implementation, calculate properly
+                metadata={
+                    "original_query": original_query,
+                    "note": "Generated via streaming_response"
+                }
             )
-            logger.info(f"✓ Generated response with confidence {response.confidence:.2f}")
+            logger.info(f"✓ Generated streaming response with confidence {response.confidence:.2f}")
             
             # Add query metadata
             response.metadata["original_query"] = original_query

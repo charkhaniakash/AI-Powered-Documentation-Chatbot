@@ -24,3 +24,28 @@ documentation-chatbot/
 │
 └── data/
     └── uploads/                     # Temporary file storage
+
+
+
+
+
+<!-- fast api folder structure -->
+
+
+    backend/
+├── app/
+│   ├── api/              # NEW: API endpoints
+│   │   ├── __init__.py
+│   │   ├── routes/
+│   │   │   ├── __init__.py
+│   │   │   ├── upload.py      # Document upload endpoint
+│   │   │   ├── query.py       # Query endpoint
+│   │   │   ├── documents.py   # Document management
+│   │   │   └── health.py      # Health check
+│   │   └── dependencies.py    # Shared dependencies
+│   ├── config/           # Existing
+│   ├── services/         # Existing (our LLM code)
+│   ├── models/           # Existing
+│   └── utils/            # Existing
+├── main.py              # Existing (CLI version)
+└── api_server.py        # NEW: FastAPI server entry point
