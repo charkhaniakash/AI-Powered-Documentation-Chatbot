@@ -29,3 +29,15 @@ python-dotenv==1.0.1
 # HTML Parsing
 beautifulsoup4==4.12.3
 
+# ==============================
+# HTTP and Requests
+# ==============================
+requests==2.31.0
+python-multipart==0.0.6
+
+# ==============================
+# FastAPI & Server
+# ==============================
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
