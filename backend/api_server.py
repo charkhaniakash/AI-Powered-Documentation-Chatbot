@@ -48,10 +48,7 @@ app.add_middleware(
     CORSMiddleware,
     # Allow these origins (websites) to access the API
     allow_origins=[
-        "http://localhost:3000",  # React development server
-        "http://localhost:5173",  # Vite development server
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
+        "*"
         # Add your production frontend URL here
         # "https://your-frontend.com"
     ],
