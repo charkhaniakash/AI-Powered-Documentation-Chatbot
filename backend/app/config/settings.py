@@ -118,8 +118,9 @@ class Settings(BaseSettings):
     )
     
     # Allowed file extensions
+    # Now includes Excel (.xlsx, .xls), CSV (.csv), and Word documents (.docx, .doc)
     ALLOWED_EXTENSIONS: list[str] = Field(
-        default=["pdf", "md", "txt"],
+        default=["pdf", "md", "txt", "xlsx", "xls", "csv", "docx", "doc"],
         description="Allowed file extensions for upload"
     )
     

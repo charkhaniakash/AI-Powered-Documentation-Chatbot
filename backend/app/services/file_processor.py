@@ -1,6 +1,6 @@
 """
 File processing service for extracting text from different file formats.
-Supports PDF, Markdown, and plain text files.
+Supports PDF, Markdown, plain text, Excel, CSV, and Word documents.
 """
 
 # Import necessary libraries
@@ -9,6 +9,7 @@ import uuid  # For generating unique IDs
 from pathlib import Path  # For cross-platform file paths
 from typing import Tuple, Optional  # For type hints
 import logging  # For logging
+import io  # For in-memory file handling
 
 # PDF processing libraries
 import PyPDF2  # Simple PDF extraction
@@ -17,6 +18,15 @@ import fitz  # PyMuPDF for better PDF handling
 # Markdown processing
 import markdown  # For parsing markdown
 from bs4 import BeautifulSoup  # For extracting text from HTML
+
+# Excel and CSV processing
+import pandas as pd  # For Excel and CSV processing
+import openpyxl  # For .xlsx files
+import xlrd  # For .xls files
+
+# Word document processing
+import docx  # python-docx for .docx files
+import mammoth  # For better .doc/.docx text extraction
 
 # Internal imports
 from app.config.settings import settings  # Application settings
@@ -60,7 +70,7 @@ class FileProcessor:
         Args:
             file_path: Path to the uploaded file
             filename: Original filename
-            file_type: Type of file (pdf, md, txt)
+            file_type: Type of file (pdf, md, txt, xlsx, xls, csv, docx, doc)
             
         Returns:
             Tuple of (extracted_text, document_metadata)
@@ -100,6 +110,21 @@ class FileProcessor:
         elif file_type == FileType.TEXT:
             # Process plain text file
             text, page_count = self._process_text(file_path)
+        elif file_type == FileType.XLSX:
+            # Process Excel .xlsx file
+            text, page_count = self._process_excel(file_path, is_xlsx=True)
+        elif file_type == FileType.XLS:
+            # Process Excel .xls file (older format)
+            text, page_count = self._process_excel(file_path, is_xlsx=False)
+        elif file_type == FileType.CSV:
+            # Process CSV file
+            text, page_count = self._process_csv(file_path)
+        elif file_type == FileType.DOCX:
+            # Process Word .docx file (newer format)
+            text, page_count = self._process_word(file_path, is_docx=True)
+        elif file_type == FileType.DOC:
+            # Process Word .doc file (older format)
+            text, page_count = self._process_word(file_path, is_docx=False)
         else:
             # Should never happen due to enum validation
             raise ValueError(f"Unsupported file type: {file_type}")
@@ -179,25 +204,28 @@ class FileProcessor:
         # Open PDF document
         # fitz.open() creates a Document object
         doc = fitz.open(file_path)
-    
+        
+        # Get page count FIRST (before closing document)
+        page_count = len(doc)
+        
         text_list = []
-    
+        
+        # Iterate through all pages
         for page_num, page in enumerate(doc, start=1):
+            # Extract text from current page
             page_text = page.get_text()
+            # Add page separator for clarity
             text_list.append(f"\n--- Page {page_num} ---\n")
             text_list.append(page_text)
+        
+        # Close the document to free resources
+        doc.close()
+        
+        # Join all page texts into single string
+        full_text = "".join(text_list)
+        
+        return full_text, page_count
     
-            # Get page count BEFORE closing
-            page_count = len(doc)
-            
-            # Now close the document to free resources
-            doc.close()
-            
-            # Join all page texts into single string
-            full_text = "".join(text_list)
-            
-            return full_text, page_count
-            
     
     def _extract_with_pypdf2(self, file_path: str) -> Tuple[str, int]:
         """
@@ -222,11 +250,15 @@ class FileProcessor:
             
             text_list = []
             
+            # Iterate through all pages
             for page_num, page in enumerate(pdf_reader.pages, start=1):
+                # Extract text from current page
                 page_text = page.extract_text()
+                # Add page separator
                 text_list.append(f"\n--- Page {page_num} ---\n")
                 text_list.append(page_text)
             
+            # Combine all text
             full_text = "".join(text_list)
             
             return full_text, page_count
@@ -322,6 +354,198 @@ class FileProcessor:
         return text, line_count
     
     
+    def _process_excel(self, file_path: str, is_xlsx: bool = True) -> Tuple[str, int]:
+        """
+        Extract text from Excel file (.xlsx or .xls).
+        
+        Reads all sheets and converts data to text format.
+        Each sheet is treated as a section.
+        
+        Args:
+            file_path: Path to Excel file
+            is_xlsx: True for .xlsx (newer format), False for .xls (older format)
+            
+        Returns:
+            Tuple of (extracted_text, sheet_count)
+            
+        Raises:
+            IOError: If Excel file cannot be read
+        """
+        logger.debug(f"Processing Excel file: {file_path}")
+        
+        try:
+            # Read Excel file with pandas
+            # sheet_name=None reads all sheets into a dictionary
+            # engine='openpyxl' for .xlsx, 'xlrd' for .xls
+            if is_xlsx:
+                # For newer Excel format (.xlsx)
+                excel_data = pd.read_excel(file_path, sheet_name=None, engine='openpyxl')
+            else:
+                # For older Excel format (.xls)
+                excel_data = pd.read_excel(file_path, sheet_name=None, engine='xlrd')
+            
+            text_list = []
+            # Count number of sheets
+            sheet_count = len(excel_data)
+            
+            # Process each sheet
+            # excel_data is a dict: {sheet_name: dataframe}
+            for sheet_name, df in excel_data.items():
+                # Add sheet header
+                text_list.append(f"\n=== Sheet: {sheet_name} ===\n")
+                
+                # Convert dataframe to string
+                # to_string() creates a formatted text representation
+                # index=False removes row numbers
+                # na_rep='' replaces NaN values with empty string
+                sheet_text = df.to_string(index=False, na_rep='')
+                text_list.append(sheet_text)
+                text_list.append("\n")
+            
+            # Combine all sheets into one text
+            full_text = "".join(text_list)
+            
+            return full_text, sheet_count
+            
+        except Exception as e:
+            # Log the error and re-raise
+            logger.error(f"Failed to process Excel file {file_path}: {str(e)}")
+            raise IOError(f"Failed to read Excel file: {str(e)}")
+    
+    
+    def _process_csv(self, file_path: str) -> Tuple[str, int]:
+        """
+        Extract text from CSV file.
+        
+        Reads CSV and converts to formatted text.
+        Handles different encodings automatically.
+        
+        Args:
+            file_path: Path to CSV file
+            
+        Returns:
+            Tuple of (extracted_text, row_count)
+            
+        Raises:
+            IOError: If CSV file cannot be read
+        """
+        logger.debug(f"Processing CSV file: {file_path}")
+        
+        try:
+            # Try different encodings for CSV
+            # CSV files can have various encodings depending on source
+            encodings = ['utf-8', 'latin-1', 'cp1252']
+            df = None
+            
+            # Try each encoding until one works
+            for encoding in encodings:
+                try:
+                    # Read CSV with pandas
+                    # pandas.read_csv() automatically handles delimiters
+                    df = pd.read_csv(file_path, encoding=encoding)
+                    logger.debug(f"Successfully read CSV with {encoding} encoding")
+                    break
+                except UnicodeDecodeError:
+                    # This encoding didn't work, try next one
+                    continue
+            
+            # If no encoding worked
+            if df is None:
+                raise IOError("Failed to read CSV with any encoding")
+            
+            # Convert to text
+            # to_string() creates formatted text output
+            # index=False removes row numbers
+            # na_rep='' replaces NaN with empty string
+            text = df.to_string(index=False, na_rep='')
+            
+            # Row count (excluding header)
+            # len(df) gives number of data rows
+            row_count = len(df)
+            
+            return text, row_count
+            
+        except Exception as e:
+            # Log the error and re-raise
+            logger.error(f"Failed to process CSV {file_path}: {str(e)}")
+            raise IOError(f"Failed to read CSV: {str(e)}")
+    
+    
+    def _process_word(self, file_path: str, is_docx: bool = True) -> Tuple[str, int]:
+        """
+        Extract text from Word document (.docx or .doc).
+        
+        Uses python-docx for .docx files and mammoth for .doc files.
+        Extracts both paragraphs and tables.
+        
+        Args:
+            file_path: Path to Word document
+            is_docx: True for .docx (newer format), False for .doc (older format)
+            
+        Returns:
+            Tuple of (extracted_text, paragraph_count)
+            
+        Raises:
+            IOError: If Word document cannot be read
+        """
+        logger.debug(f"Processing Word document: {file_path}")
+        
+        try:
+            if is_docx:
+                # Process .docx with python-docx
+                # docx.Document() opens the Word file
+                doc = docx.Document(file_path)
+                
+                text_list = []
+                paragraph_count = 0
+                
+                # Extract paragraphs
+                # doc.paragraphs gives list of all paragraph objects
+                for para in doc.paragraphs:
+                    if para.text.strip():  # Only add non-empty paragraphs
+                        text_list.append(para.text)
+                        paragraph_count += 1
+                
+                # Extract tables
+                # Word documents can contain tables with structured data
+                for table in doc.tables:
+                    text_list.append("\n--- Table ---")
+                    # Iterate through rows
+                    for row in table.rows:
+                        # Join cells with pipe separator
+                        row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                        if row_text.strip():
+                            text_list.append(row_text)
+                    text_list.append("--- End Table ---\n")
+                
+                # Join all text with newlines
+                full_text = "\n".join(text_list)
+                
+            else:
+                # Process .doc with mammoth
+                # mammoth converts .doc to HTML, then extracts text
+                # Handles older Word format better
+                with open(file_path, 'rb') as docx_file:
+                    # extract_raw_text() gets plain text without HTML
+                    result = mammoth.extract_raw_text(docx_file)
+                    full_text = result.value
+                
+                # Count paragraphs (rough estimate)
+                # Split by newlines and count non-empty lines
+                paragraph_count = len([p for p in full_text.split('\n') if p.strip()])
+            
+            # Ensure we have at least 1 paragraph
+            if paragraph_count == 0:
+                paragraph_count = 1
+            
+            return full_text, paragraph_count
+            
+        except Exception as e:
+            # Log the error and re-raise
+            logger.error(f"Failed to process Word document {file_path}: {str(e)}")
+            raise IOError(f"Failed to read Word document: {str(e)}")
+    
+    
     def _clean_text(self, text: str) -> str:
         """
         Clean and normalize extracted text.
@@ -411,7 +635,12 @@ class FileProcessor:
         extension_map = {
             'pdf': FileType.PDF,
             'md': FileType.MARKDOWN,
-            'txt': FileType.TEXT
+            'txt': FileType.TEXT,
+            'xlsx': FileType.XLSX,
+            'xls': FileType.XLS,
+            'csv': FileType.CSV,
+            'docx': FileType.DOCX,
+            'doc': FileType.DOC
         }
         
         return extension_map[extension]

@@ -18,9 +18,14 @@ class FileType(str, Enum):
     Enum ensures only valid file types are used throughout the app.
     str inheritance allows it to be serialized as string in JSON.
     """
-    PDF = "pdf"      # PDF documents
-    MARKDOWN = "md"  # Markdown files
-    TEXT = "txt"     # Plain text files
+    PDF = "pdf"          # PDF documents
+    MARKDOWN = "md"      # Markdown files
+    TEXT = "txt"         # Plain text files
+    XLSX = "xlsx"        # Excel files (newer format)
+    XLS = "xls"          # Excel files (older format)
+    CSV = "csv"          # Comma-separated values
+    DOCX = "docx"        # Word documents (newer format)
+    DOC = "doc"          # Word documents (older format)
 
 
 class ProcessingStatus(str, Enum):
@@ -55,7 +60,7 @@ class DocumentMetadata(BaseModel):
     # File type
     file_type: FileType = Field(
         ...,
-        description="Type of the document (pdf, md, txt)"
+        description="Type of the document (pdf, md, txt, xlsx, xls, csv, docx, doc)"
     )
     
     # File size in bytes
@@ -77,10 +82,10 @@ class DocumentMetadata(BaseModel):
         description="Unique identifier for the document"
     )
     
-    # Number of pages (for PDFs) or lines (for text files)
+    # Number of pages (for PDFs) or lines (for text files) or sheets (for Excel)
     page_count: Optional[int] = Field(
         default=None,
-        description="Number of pages/sections in document"
+        description="Number of pages/sections/sheets in document"
     )
     
     # User who uploaded (optional, for multi-user systems)
