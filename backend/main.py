@@ -32,6 +32,8 @@ from app.utils.helpers import (
     setup_logging
 )
 
+from app.services.cache_manager import get_cache_manager
+
 # ========== Setup Logging ==========
 setup_logging(log_level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -93,6 +95,14 @@ class DocumentChatbot:
         
         self.llm_service = get_llm_service()
         logger.info("✓ LLM service ready")
+
+        # Initialize cache manager
+        if settings.ENABLE_CACHING:
+            self.cache_manager = get_cache_manager()
+            logger.info("✓ Cache manager ready")
+        else:
+            self.cache_manager = None
+            logger.info("○ Caching disabled")
         
         # Log hybrid search status
         if settings.ENABLE_HYBRID_SEARCH:

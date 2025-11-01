@@ -196,6 +196,62 @@ class Settings(BaseSettings):
         ge=1,
         description="Maximum sentences per chunk for compression"
     )
+
+    # ========== Cache Settings ==========
+    ENABLE_CACHING: bool = Field(
+        default=True,
+        description="Enable multi-level caching system"
+    )
+
+    # L1 Cache (In-Memory)
+    L1_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="Enable L1 in-memory cache"
+    )
+    L1_CACHE_MAX_SIZE: int = Field(
+        default=1000,
+        description="Maximum L1 cache entries"
+    )
+    L1_CACHE_TTL_SECONDS: int = Field(
+        default=3600,  # 1 hour
+        description="L1 cache time-to-live in seconds"
+    )
+
+    # L3 Cache (Redis)
+    L3_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="Enable L3 Redis cache"
+    )
+    REDIS_HOST: str = Field(
+        default="localhost",
+        description="Redis host"
+    )
+    REDIS_PORT: int = Field(
+        default=6379,
+        description="Redis port"
+    )
+    REDIS_DB: int = Field(
+        default=0,
+        description="Redis database number"
+    )
+    REDIS_PASSWORD: Optional[str] = Field(
+        default=None,
+        description="Redis password (optional)"
+    )
+    REDIS_TTL_SECONDS: int = Field(
+        default=86400,  # 24 hours
+        description="Redis cache TTL in seconds"
+    )
+    REDIS_MAX_CONNECTIONS: int = Field(
+        default=10,
+        description="Maximum Redis connection pool size"
+    )
+
+    # Cache Key Prefix
+    CACHE_KEY_PREFIX: str = Field(
+        default="rag_cache",
+        description="Prefix for all cache keys"
+    )
     
     class Config:
         """

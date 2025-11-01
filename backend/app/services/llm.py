@@ -18,6 +18,7 @@ from app.models.schemas import (  # Data models
     QueryResponse,
     RetrievedChunk
 )
+from app.services.cache_manager import get_cache_manager
 
 # ========== Setup Logging ==========
 logger = logging.getLogger(__name__)
@@ -62,7 +63,13 @@ class LLMService:
         logger.info(
             f"LLMService initialized with model: {self.model_name}"
         )
-    
+
+        # Initialize cache manager
+        if settings.ENABLE_CACHING:
+            self.cache_manager = get_cache_manager()
+        else:
+            self.cache_manager = None
+            
     
     def generate_response(
         self,
@@ -91,7 +98,24 @@ class LLMService:
             RuntimeError: If generation fails
         """
         logger.info(f"Generating response for query: {query[:50]}...")
+
+
+        # ✨ NEW: Try cache first
+        if self.cache_manager and settings.ENABLE_CACHING:
+            cache_key = self.cache_manager.generate_llm_response_key(
+                query=query,
+                chunk_ids=[rc.chunk.chunk_id for rc in context_chunks]
+            )
+            
+            cached_response = self.cache_manager.get(cache_key)
+            if cached_response is not None:
+                logger.info("✓ LLM Response: CACHE HIT")
+                return cached_response
+            
+            logger.info("○ LLM Response: CACHE MISS (generating...")
         
+
+
         # Build the prompt with context
         prompt = self._build_prompt(query, context_chunks)
         
@@ -143,6 +167,10 @@ class LLMService:
                 f"Generated response: {len(answer)} chars, "
                 f"confidence: {confidence:.2f}"
             )
+
+            # ✨ NEW: Store in cache
+            if self.cache_manager and settings.ENABLE_CACHING:
+                self.cache_manager.set(cache_key, query_response)
             
             return query_response
             

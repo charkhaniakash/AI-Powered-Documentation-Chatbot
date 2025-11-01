@@ -10,6 +10,7 @@ import numpy as np
 
 from app.config.settings import settings
 from app.models.schemas import RetrievedChunk, TextChunk
+from app.services.cache_manager import get_cache_manager
 
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.LOG_LEVEL)
@@ -46,6 +47,12 @@ class ContextualCompressor:
         
         # Lazy load embedding model (reuse from system)
         self._embedder = None
+
+        # Initialize cache manager
+        if settings.ENABLE_CACHING:
+            self.cache_manager = get_cache_manager()
+        else:
+            self.cache_manager = None
         
         logger.info(
             f"ContextualCompressor initialized: threshold={self.relevance_threshold}, "
@@ -85,6 +92,21 @@ class ContextualCompressor:
             return []
         
         logger.info(f"🗜️  Compressing {len(retrieved_chunks)} retrieved chunks...")
+
+        # ✨ NEW: Try cache first
+        if self.cache_manager and settings.ENABLE_CACHING:
+            cache_key = self.cache_manager.generate_compression_key(
+                query=query,
+                chunk_ids=[rc.chunk.chunk_id for rc in retrieved_chunks]
+            )
+            
+            cached_result = self.cache_manager.get(cache_key)
+            if cached_result is not None:
+                logger.info("✓ Compression: CACHE HIT")
+                return cached_result
+            
+            logger.info("○ Compression: CACHE MISS (compressing...)")
+
         
         # Get query embedding once
         embedder = self._get_embedder()
@@ -148,6 +170,13 @@ class ContextualCompressor:
             f"   ✓ Compressed to {len(compressed_chunks)} chunks "
             f"({total_compressed_chars:,} chars, {compression_ratio:.1f}% reduction)"
         )
+
+
+        # ✨ NEW: Store in cache
+        if self.cache_manager and settings.ENABLE_CACHING:
+            self.cache_manager.set(cache_key, compressed_chunks)
+
+
         
         return compressed_chunks
     

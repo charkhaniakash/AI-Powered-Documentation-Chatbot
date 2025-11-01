@@ -19,6 +19,8 @@ from app.models.schemas import EmbeddedChunk, RetrievedChunk, TextChunk  # Data 
 # ADD THIS IMPORT AT THE TOP
 from app.services.hybrid_search import get_hybrid_search_service
 
+from app.services.cache_manager import get_cache_manager
+
 # ========== Setup Logging ==========
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.LOG_LEVEL)
@@ -92,6 +94,13 @@ class VectorStore:
             self.hybrid_search = get_hybrid_search_service()
         else:
             self.hybrid_search = None
+
+        # Initialize cache manager
+        if settings.ENABLE_CACHING:
+            self.cache_manager = get_cache_manager()
+            logger.info("✓ Cache manager initialized")
+        else:
+            self.cache_manager = None
 
     
     
@@ -343,6 +352,25 @@ class VectorStore:
         # Use configured top_k if not provided
         if top_k is None:
             top_k = settings.TOP_K_RESULTS
+            
+        
+        # ✨ NEW: Try cache first (Caching is enabled)
+        if self.cache_manager and settings.ENABLE_CACHING:
+            cache_key = self.cache_manager.generate_vector_search_key(
+                query_text=query_text,
+                query_embedding=query_embedding,
+                top_k=top_k,
+                namespace=namespace,
+                filter_dict=filter_dict
+            )
+            
+            # Try to get from cache
+            cached_result = self.cache_manager.get(cache_key)
+            if cached_result is not None:
+                logger.info("✓ Vector search: CACHE HIT")
+                return cached_result
+            
+            logger.info("○ Vector search: CACHE MISS (fetching from Pinecone...)")
         
         logger.info(f"Querying Pinecone for top {top_k} similar vectors...")
         
@@ -405,6 +433,10 @@ class VectorStore:
                     bm25_weight=settings.BM25_WEIGHT
                 )
                 logger.info(f"Hybrid search returned {len(retrieved_chunks)} results")
+
+            # ✨ NEW: Store in cache (caching is enabled)
+            if self.cache_manager and settings.ENABLE_CACHING:
+                self.cache_manager.set(cache_key, retrieved_chunks)
             
             return retrieved_chunks
             
