@@ -16,6 +16,9 @@ from pinecone import Pinecone, ServerlessSpec  # Pinecone client and config
 from app.config.settings import settings  # Application settings
 from app.models.schemas import EmbeddedChunk, RetrievedChunk, TextChunk  # Data models
 
+# ADD THIS IMPORT AT THE TOP
+from app.services.hybrid_search import get_hybrid_search_service
+
 # ========== Setup Logging ==========
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.LOG_LEVEL)
@@ -81,6 +84,15 @@ class VectorStore:
             f"VectorStore initialized: index={self.index_name}, "
             f"dimension={self.dimension}"
         )
+
+        # hybrid_search code start
+
+        if settings.ENABLE_HYBRID_SEARCH:
+            logger.info("Initializing hybrid search...")
+            self.hybrid_search = get_hybrid_search_service()
+        else:
+            self.hybrid_search = None
+
     
     
     def _get_or_create_index(self) -> None:
@@ -218,6 +230,22 @@ class VectorStore:
         else:
             logger.info(f"Successfully upserted all {total_upserted} vectors")
         
+        # hybrid_search code start
+        if self.hybrid_search:
+            text_chunks = [
+                TextChunk(
+                    chunk_id=c.chunk_id,
+                    text=c.text,
+                    metadata=c.metadata,
+                    chunk_index=c.chunk_index,
+                    start_char=c.start_char,
+                    end_char=c.end_char
+                )
+                for c in chunks
+            ]
+            self.hybrid_search.add_chunks_to_bm25(text_chunks)
+            logger.info("✓ Added to BM25 index")
+        
         # Return results
         return {
             "total_chunks": len(chunks),
@@ -284,19 +312,22 @@ class VectorStore:
     def query_similar(
         self,
         query_embedding: List[float],
+        query_text: str = "",  # ✨ NEW: Add this parameter
         top_k: int = None,
         namespace: str = "",
         filter_dict: Optional[Dict[str, Any]] = None,
         include_metadata: bool = True
     ) -> List[RetrievedChunk]:
         """
-        Query for similar vectors.
+        Query for similar vectors with optional hybrid search.  # ✨ UPDATED
         
         This is the core retrieval operation for RAG.
         Finds chunks most similar to the query embedding.
+        If hybrid search enabled, merges with BM25 results.  # ✨ NEW
         
         Args:
             query_embedding: Query vector to search for
+            query_text: Original query text (for BM25 hybrid search)  # ✨ NEW
             top_k: Number of results to return (uses settings if None)
             namespace: Namespace to search in
             filter_dict: Metadata filters (optional)
@@ -362,12 +393,25 @@ class VectorStore:
                 f"(above threshold {settings.SIMILARITY_THRESHOLD})"
             )
             
+            # ✨ NEW: Apply hybrid search if enabled
+            if self.hybrid_search and settings.ENABLE_HYBRID_SEARCH and query_text:
+                logger.info("Applying hybrid search fusion...")
+                retrieved_chunks = self.hybrid_search.hybrid_search(
+                    query=query_text,
+                    vector_results=retrieved_chunks,
+                    top_k=top_k,
+                    use_rrf=settings.USE_RRF,
+                    vector_weight=settings.VECTOR_WEIGHT,
+                    bm25_weight=settings.BM25_WEIGHT
+                )
+                logger.info(f"Hybrid search returned {len(retrieved_chunks)} results")
+            
             return retrieved_chunks
             
         except Exception as e:
             logger.error(f"Query failed: {str(e)}")
             raise RuntimeError(f"Vector query failed: {str(e)}")
-    
+
     
     def _metadata_to_chunk(
         self,

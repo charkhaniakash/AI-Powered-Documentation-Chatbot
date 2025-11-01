@@ -1,12 +1,14 @@
 """
 Main pipeline orchestrator for the Documentation Chatbot.
-Coordinates all services to implement the complete RAG system.
+Coordinates all services to implement the complete RAG system with Hybrid Search.
 """
 
 # Import necessary libraries
-import logging  # For logging
-from typing import List, Dict, Any, Optional  # For type hints
-import os  # For environment variables
+import logging
+from typing import List, Dict, Any, Optional
+import os
+import sys
+import json
 
 # Import all service modules
 from app.config.settings import settings, validate_settings, create_upload_directory
@@ -38,15 +40,16 @@ logger = logging.getLogger(__name__)
 # ========== Main RAG Pipeline Class ==========
 class DocumentChatbot:
     """
-    Complete RAG pipeline for document Q&A.
+    Complete RAG pipeline for document Q&A with Hybrid Search.
     
     This class orchestrates all components:
     1. File Processing
     2. Text Chunking
     3. Embedding Generation
-    4. Vector Storage
-    5. Query Processing
-    6. Response Generation
+    4. Vector Storage (Pinecone)
+    5. BM25 Indexing (for hybrid search)
+    6. Query Processing (Vector + BM25 + RRF)
+    7. Response Generation (LLM)
     
     Usage:
         chatbot = DocumentChatbot()
@@ -66,25 +69,44 @@ class DocumentChatbot:
             embedding_provider: 'sentence_transformers' or 'openai'
             vector_store_provider: 'pinecone' or 'chroma'
         """
-        logger.info("Initializing DocumentChatbot...")
+        logger.info("=" * 80)
+        logger.info("Initializing DocumentChatbot with Hybrid Search...")
+        logger.info("=" * 80)
         
         # Validate settings
         validate_settings()
         create_upload_directory()
         
         # Initialize all services
-        # Each service is a specialized component
+        logger.info("Loading services...")
         self.file_processor = get_file_processor()
+        logger.info("✓ File processor ready")
+        
         self.text_chunker = get_text_chunker()
+        logger.info("✓ Text chunker ready")
+        
         self.embedding_generator = get_embedding_generator(embedding_provider)
+        logger.info("✓ Embedding generator ready")
+        
         self.vector_store = get_vector_store(vector_store_provider)
+        logger.info("✓ Vector store ready")
+        
         self.llm_service = get_llm_service()
+        logger.info("✓ LLM service ready")
+        
+        # Log hybrid search status
+        if settings.ENABLE_HYBRID_SEARCH:
+            fusion_method = "RRF" if settings.USE_RRF else f"Weighted ({settings.VECTOR_WEIGHT}/{settings.BM25_WEIGHT})"
+            logger.info(f"✓ Hybrid Search ENABLED (Fusion: {fusion_method})")
+        else:
+            logger.info("⚠ Hybrid Search DISABLED (Vector-only mode)")
         
         # Storage for tracking processing jobs
-        # In production, this would be a database
         self.processing_jobs: Dict[str, ProcessingJob] = {}
         
+        logger.info("=" * 80)
         logger.info("DocumentChatbot initialized successfully")
+        logger.info("=" * 80)
     
     
     @timing_decorator
@@ -97,11 +119,12 @@ class DocumentChatbot:
         """
         Ingest a document into the system.
         
-        This is the complete ingestion pipeline:
+        Complete ingestion pipeline:
         1. Process file (extract text)
         2. Chunk text
         3. Generate embeddings
-        4. Store in vector database
+        4. Store in vector database (Pinecone)
+        5. Index in BM25 (if hybrid search enabled)
         
         Args:
             file_path: Path to document file
@@ -115,7 +138,9 @@ class DocumentChatbot:
             ValueError: If file is invalid
             RuntimeError: If ingestion fails
         """
-        logger.info(f"Starting document ingestion: {file_path}")
+        logger.info("\n" + "=" * 80)
+        logger.info(f"INGESTING DOCUMENT: {file_path}")
+        logger.info("=" * 80)
         
         # Use filename from path if not provided
         if filename is None:
@@ -123,53 +148,60 @@ class DocumentChatbot:
         
         try:
             # Step 1: Validate and process file
-            logger.info("Step 1: Processing file...")
+            logger.info("📄 Step 1/4: Processing file...")
             file_type = self.file_processor.validate_file(file_path, filename)
             text, metadata = self.file_processor.process_file(
                 file_path=file_path,
                 filename=filename,
                 file_type=file_type
             )
-            logger.info(f"✓ Extracted {len(text)} characters")
+            logger.info(f"   ✓ Extracted {len(text):,} characters from {filename}")
             
             # Step 2: Chunk the text
-            logger.info(f"Step 2: Chunking text using {chunking_strategy} strategy...")
+            logger.info(f"✂️  Step 2/4: Chunking text (strategy: {chunking_strategy})...")
             chunks = self.text_chunker.chunk_text(
                 text=text,
                 metadata=metadata,
                 strategy=chunking_strategy
             )
-            logger.info(f"✓ Created {len(chunks)} chunks")
+            logger.info(f"   ✓ Created {len(chunks)} chunks")
             
             # Step 3: Generate embeddings
-            logger.info("Step 3: Generating embeddings...")
+            logger.info("🧮 Step 3/4: Generating embeddings...")
             embedded_chunks = self.embedding_generator.embed_chunks(
                 chunks=chunks,
                 show_progress=True
             )
-            logger.info(f"✓ Generated {len(embedded_chunks)} embeddings")
+            logger.info(f"   ✓ Generated {len(embedded_chunks)} embeddings")
             
-            # Step 4: Store in vector database
-            logger.info("Step 4: Storing in vector database...")
+            # Step 4: Store in vector database (+ BM25 if enabled)
+            logger.info("💾 Step 4/4: Storing in vector database...")
             upsert_result = self.vector_store.upsert_chunks(
                 chunks=embedded_chunks,
-                namespace=""  # Default namespace
+                namespace=""
             )
-            logger.info(f"✓ Stored {upsert_result['upserted_count']} vectors")
+            
+            logger.info(f"   ✓ Stored {upsert_result['upserted_count']} vectors in Pinecone")
+            
+            if upsert_result.get('hybrid_search_enabled'):
+                logger.info(f"   ✓ Added {len(chunks)} chunks to BM25 index")
             
             # Create upload response
             upload_response = UploadResponse(
                 job_id=metadata.document_id,
                 document_id=metadata.document_id,
-                message="Document ingested successfully",
+                message=f"Document '{filename}' ingested successfully",
                 status=ProcessingStatus.COMPLETED
             )
             
-            logger.info(f"✓ Document ingestion completed: {metadata.document_id}")
+            logger.info("=" * 80)
+            logger.info(f"✅ INGESTION COMPLETE: {metadata.document_id}")
+            logger.info("=" * 80 + "\n")
+            
             return upload_response
             
         except Exception as e:
-            logger.error(f"Document ingestion failed: {str(e)}")
+            logger.error(f"❌ Document ingestion failed: {str(e)}")
             raise RuntimeError(f"Ingestion failed: {str(e)}")
     
     
@@ -180,15 +212,16 @@ class DocumentChatbot:
         top_k: Optional[int] = None,
         document_ids: Optional[List[str]] = None,
         include_sources: bool = True,
-        rephrase_query: bool = False
+        rephrase_query: bool = False,
+        streaming: bool = False
     ) -> QueryResponse:
         """
         Query the chatbot with a question.
         
-        This is the complete RAG query pipeline:
+        Complete RAG query pipeline with Hybrid Search:
         1. (Optional) Rephrase query
         2. Generate query embedding
-        3. Retrieve similar chunks
+        3. Retrieve similar chunks (Vector + BM25 + Fusion)
         4. Generate response with LLM
         
         Args:
@@ -197,6 +230,7 @@ class DocumentChatbot:
             document_ids: Filter by specific documents
             include_sources: Include source chunks in response
             rephrase_query: Whether to rephrase query for better retrieval
+            streaming: Use streaming response (prints in real-time)
             
         Returns:
             QueryResponse with answer and sources
@@ -209,23 +243,30 @@ class DocumentChatbot:
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
         
-        logger.info(f"Processing query: {query[:100]}...")
+        logger.info("\n" + "=" * 80)
+        logger.info(f"PROCESSING QUERY: {query[:100]}{'...' if len(query) > 100 else ''}")
+        logger.info("=" * 80)
+        
+        # Use default top_k if not provided
+        if top_k is None:
+            top_k = settings.TOP_K_RESULTS
         
         try:
             # Optional: Rephrase query for better retrieval
             original_query = query
             if rephrase_query:
-                logger.info("Rephrasing query...")
+                logger.info("🔄 Rephrasing query for better retrieval...")
                 query = self.llm_service.rephrase_query(query)
-                logger.info(f"Rephrased to: {query}")
+                logger.info(f"   Rephrased: {query}")
             
             # Step 1: Generate query embedding
-            logger.info("Step 1: Generating query embedding...")
+            logger.info("🧮 Step 1/3: Generating query embedding...")
             query_embedding = self.embedding_generator.embed_query(query)
-            logger.info(f"✓ Generated embedding with {len(query_embedding)} dimensions")
+            logger.info(f"   ✓ Generated {len(query_embedding)}-dimensional embedding")
             
-            # Step 2: Retrieve similar chunks
-            logger.info("Step 2: Retrieving similar chunks...")
+            # Step 2: Retrieve similar chunks (HYBRID SEARCH)
+            search_mode = "Hybrid (Vector + BM25)" if settings.ENABLE_HYBRID_SEARCH else "Vector-only"
+            logger.info(f"🔍 Step 2/3: Retrieving relevant chunks ({search_mode})...")
             
             # Build metadata filter if document_ids provided
             filter_dict = None
@@ -233,63 +274,122 @@ class DocumentChatbot:
                 filter_dict = {
                     "document_id": {"$in": document_ids}
                 }
+                logger.info(f"   Filtering by document IDs: {document_ids}")
             
+            # THIS IS WHERE HYBRID SEARCH HAPPENS
             retrieved_chunks = self.vector_store.query_similar(
                 query_embedding=query_embedding,
+                query_text=query,  # IMPORTANT: Pass query text for BM25
                 top_k=top_k,
                 filter_dict=filter_dict,
                 include_metadata=True
             )
-            logger.info(f"✓ Retrieved {len(retrieved_chunks)} relevant chunks")
+            
+            logger.info(f"   ✓ Retrieved {len(retrieved_chunks)} relevant chunks")
+            
+            if settings.ENABLE_HYBRID_SEARCH:
+                fusion_method = "RRF" if settings.USE_RRF else "Weighted"
+                logger.info(f"   ℹ Fusion method: {fusion_method}")
+            
+            # Show top results
+            if retrieved_chunks:
+                logger.info("   Top 3 results:")
+                for i, rc in enumerate(retrieved_chunks[:3], 1):
+                    logger.info(f"     [{i}] {rc.chunk.metadata.filename} (score: {rc.score:.3f})")
             
             # Check if we have any results
             if not retrieved_chunks:
-                logger.warning("No relevant chunks found")
-                # Return a response indicating no results
+                logger.warning("⚠️  No relevant chunks found")
                 return QueryResponse(
                     answer="I couldn't find any relevant information in the documents to answer your question.",
                     sources=[],
                     confidence=0.0,
                     metadata={
                         "query": original_query,
-                        "chunks_found": 0
+                        "chunks_found": 0,
+                        "hybrid_search": settings.ENABLE_HYBRID_SEARCH
                     }
                 )
             
-            # Step 3: Generate response with LLM (using streaming for real-time output)
-            logger.info("Step 3: Generating response...")
-            full_answer = ""
-            for chunk in self.llm_service.generate_streaming_response(
-                query=original_query,  # Use original query for answer generation
-                context_chunks=retrieved_chunks,
-                conversation_history=None
-            ):
-                print(chunk, end='', flush=True)  # Print chunks in real-time for demo
-                full_answer += chunk
+            # Step 3: Generate response with LLM
+            logger.info("🤖 Step 3/3: Generating response with LLM...")
             
-            # Reconstruct QueryResponse for consistency (streaming doesn't return full object)
-            # Note: Confidence and metadata are approximated here for demo purposes
-            response = QueryResponse(
-                answer=full_answer,
-                sources=retrieved_chunks,
-                confidence=0.8,  # Placeholder; in full implementation, calculate properly
-                metadata={
-                    "original_query": original_query,
-                    "note": "Generated via streaming_response"
-                }
-            )
-            logger.info(f"✓ Generated streaming response with confidence {response.confidence:.2f}")
+            if streaming:
+                # Streaming response (prints in real-time)
+                logger.info("   Streaming response:")
+                print("\n" + "-" * 80)
+                print("Assistant: ", end='', flush=True)
+                
+                full_answer = ""
+                for chunk in self.llm_service.generate_streaming_response(
+                    query=original_query,
+                    context_chunks=retrieved_chunks,
+                    conversation_history=None
+                ):
+                    print(chunk, end='', flush=True)
+                    full_answer += chunk
+                
+                print("\n" + "-" * 80)
+                
+                # Create response object
+                response = QueryResponse(
+                    answer=full_answer,
+                    sources=retrieved_chunks if include_sources else [],
+                    confidence=self._calculate_confidence(retrieved_chunks, full_answer),
+                    metadata={
+                        "original_query": original_query,
+                        "mode": "streaming",
+                        "hybrid_search": settings.ENABLE_HYBRID_SEARCH,
+                        "fusion_method": "RRF" if settings.USE_RRF else "weighted"
+                    }
+                )
+            else:
+                # Non-streaming response
+                response = self.llm_service.generate_response(
+                    query=original_query,
+                    context_chunks=retrieved_chunks,
+                    conversation_history=None
+                )
+                
+                # Add metadata
+                response.metadata["hybrid_search"] = settings.ENABLE_HYBRID_SEARCH
+                response.metadata["fusion_method"] = "RRF" if settings.USE_RRF else "weighted"
+                
+                if not include_sources:
+                    response.sources = []
+            
+            logger.info(f"   ✓ Generated response ({len(response.answer)} chars)")
+            logger.info(f"   ✓ Confidence: {response.confidence:.2f}")
             
             # Add query metadata
             response.metadata["original_query"] = original_query
             if rephrase_query:
                 response.metadata["rephrased_query"] = query
             
+            logger.info("=" * 80)
+            logger.info("✅ QUERY COMPLETE")
+            logger.info("=" * 80 + "\n")
+            
             return response
             
         except Exception as e:
-            logger.error(f"Query processing failed: {str(e)}")
+            logger.error(f"❌ Query processing failed: {str(e)}")
             raise RuntimeError(f"Query failed: {str(e)}")
+    
+    
+    def _calculate_confidence(self, chunks: List, answer: str) -> float:
+        """Calculate confidence score for answer."""
+        if not chunks:
+            return 0.0
+        
+        # Average similarity score
+        avg_score = sum(c.score for c in chunks) / len(chunks)
+        
+        # Boost if answer is substantial
+        length_factor = min(len(answer) / 200, 1.0) * 0.2
+        
+        confidence = min(avg_score + length_factor, 1.0)
+        return confidence
     
     
     def query_with_citations(
@@ -307,13 +407,14 @@ class DocumentChatbot:
         Returns:
             Dictionary with answer and citation mapping
         """
-        logger.info("Processing query with citations...")
+        logger.info(f"Processing query with citations: {query[:50]}...")
         
         # Generate embedding and retrieve chunks
         query_embedding = self.embedding_generator.embed_query(query)
         retrieved_chunks = self.vector_store.query_similar(
             query_embedding=query_embedding,
-            top_k=top_k
+            query_text=query,
+            top_k=top_k or settings.TOP_K_RESULTS
         )
         
         # Generate answer with citations
@@ -363,11 +464,15 @@ class DocumentChatbot:
         stats = {
             "vector_store": self.vector_store.get_index_stats(),
             "embedding_dimension": self.embedding_generator.get_embedding_dimension(),
+            "hybrid_search_enabled": settings.ENABLE_HYBRID_SEARCH,
+            "fusion_method": "RRF" if settings.USE_RRF else f"Weighted ({settings.VECTOR_WEIGHT}/{settings.BM25_WEIGHT})",
             "settings": {
                 "chunk_size": settings.CHUNK_SIZE,
                 "chunk_overlap": settings.CHUNK_OVERLAP,
                 "top_k": settings.TOP_K_RESULTS,
-                "similarity_threshold": settings.SIMILARITY_THRESHOLD
+                "similarity_threshold": settings.SIMILARITY_THRESHOLD,
+                "llm_model": settings.LLM_MODEL_NAME,
+                "embedding_model": settings.EMBEDDING_MODEL_NAME
             }
         }
         
@@ -386,7 +491,8 @@ class DocumentChatbot:
         health = {
             "vector_store": False,
             "embedding_generator": False,
-            "llm_service": False
+            "llm_service": False,
+            "hybrid_search": False
         }
         
         # Check vector store
@@ -397,7 +503,6 @@ class DocumentChatbot:
         
         # Check embedding generator
         try:
-            # Try to embed a test string
             test_embedding = self.embedding_generator.embed_query("test")
             health["embedding_generator"] = len(test_embedding) > 0
         except Exception as e:
@@ -405,7 +510,6 @@ class DocumentChatbot:
         
         # Check LLM service
         try:
-            # Try a simple generation
             test_response = self.llm_service.generate_response(
                 query="test",
                 context_chunks=[]
@@ -414,8 +518,19 @@ class DocumentChatbot:
         except Exception as e:
             logger.error(f"LLM service health check failed: {e}")
         
-        all_healthy = all(health.values())
-        logger.info(f"Health check: {'✓ All systems operational' if all_healthy else '✗ Some systems failing'}")
+        # Check hybrid search
+        if settings.ENABLE_HYBRID_SEARCH and self.vector_store.hybrid_search:
+            try:
+                bm25_stats = self.vector_store.hybrid_search.get_index_stats()
+                health["hybrid_search"] = bm25_stats.get("index_exists", False)
+            except Exception as e:
+                logger.error(f"Hybrid search health check failed: {e}")
+        else:
+            health["hybrid_search"] = None  # Not enabled
+        
+        all_healthy = all(v for v in health.values() if v is not None)
+        
+        logger.info(f"Health check: {'✅ All systems operational' if all_healthy else '⚠️ Some systems failing'}")
         
         return health
 
@@ -432,7 +547,7 @@ def ingest_multiple_documents(
     Args:
         chatbot: DocumentChatbot instance
         file_paths: List of file paths
-        show_progress: Whether to show progress bar
+        show_progress: Whether to show progress
         
     Returns:
         List of UploadResponse objects
@@ -454,7 +569,6 @@ def ingest_multiple_documents(
                 
         except Exception as e:
             logger.error(f"Failed to ingest {file_path}: {str(e)}")
-            # Continue with next document
             if show_progress:
                 tracker.update(1)
     
@@ -474,14 +588,20 @@ def interactive_chat(chatbot: DocumentChatbot) -> None:
     """
     print("\n" + "=" * 80)
     print("DOCUMENTATION CHATBOT - Interactive Mode")
+    if settings.ENABLE_HYBRID_SEARCH:
+        fusion = "RRF" if settings.USE_RRF else f"Weighted {settings.VECTOR_WEIGHT}/{settings.BM25_WEIGHT}"
+        print(f"Hybrid Search: ENABLED ({fusion})")
+    else:
+        print("Search Mode: Vector-only")
     print("=" * 80)
     print("Type your questions below. Type 'exit' or 'quit' to end the session.")
-    print("Commands:")
-    print("  - /stats : Show system statistics")
-    print("  - /health : Check system health")
+    print("\nCommands:")
+    print("  /stats   - Show system statistics")
+    print("  /health  - Check system health")
+    print("  /hybrid  - Toggle hybrid search on/off")
     print("=" * 80 + "\n")
     
-    # Conversation history for context
+    # Conversation history
     conversation_history = []
     
     while True:
@@ -508,11 +628,24 @@ def interactive_chat(chatbot: DocumentChatbot) -> None:
                 health = chatbot.health_check()
                 print("\n🏥 System Health:")
                 for service, status in health.items():
-                    status_icon = "✓" if status else "✗"
-                    print(f"  {status_icon} {service}: {'OK' if status else 'FAILED'}")
+                    if status is None:
+                        status_icon = "⊘"
+                        status_text = "DISABLED"
+                    elif status:
+                        status_icon = "✓"
+                        status_text = "OK"
+                    else:
+                        status_icon = "✗"
+                        status_text = "FAILED"
+                    print(f"  {status_icon} {service}: {status_text}")
+                continue
+            elif query == '/hybrid':
+                current = settings.ENABLE_HYBRID_SEARCH
+                print(f"\n🔀 Hybrid Search currently: {'ENABLED' if current else 'DISABLED'}")
+                print("   (Modify .env file and restart to change)")
                 continue
             else:
-                print("Unknown command. Available commands: /stats, /health")
+                print("❌ Unknown command. Available: /stats, /health, /hybrid")
                 continue
         
         # Skip empty queries
@@ -521,8 +654,12 @@ def interactive_chat(chatbot: DocumentChatbot) -> None:
         
         # Process query
         try:
-            print("\n⏳ Processing...")
-            response = chatbot.query(query, include_sources=True)
+            print("\n⏳ Processing...\n")
+            response = chatbot.query(
+                query=query,
+                include_sources=True,
+                streaming=False  # Set to True for real-time streaming
+            )
             
             # Display answer
             print("\n" + "=" * 80)
@@ -530,34 +667,24 @@ def interactive_chat(chatbot: DocumentChatbot) -> None:
             print("-" * 80)
             print(response.answer)
             
-            # Display sources if available
+            # Display sources
             if response.sources:
                 print("\n📚 Sources:")
                 print("-" * 80)
-                for i, retrieved_chunk in enumerate(response.sources[:3], start=1):  # Show top 3
+                for i, retrieved_chunk in enumerate(response.sources[:3], start=1):
                     chunk = retrieved_chunk.chunk
                     score = retrieved_chunk.score
-                    print(f"\n[{i}] {chunk.metadata.filename} (relevance: {score:.2f})")
-                    print(f"    {chunk.text[:150]}...")
+                    print(f"\n[{i}] {chunk.metadata.filename} (score: {score:.3f})")
+                    preview = chunk.text[:150].replace('\n', ' ')
+                    print(f"    {preview}...")
             
             # Display metadata
             print(f"\n💡 Confidence: {response.confidence:.2f}")
+            if settings.ENABLE_HYBRID_SEARCH:
+                fusion = response.metadata.get('fusion_method', 'unknown')
+                print(f"🔀 Fusion: {fusion}")
             print("=" * 80)
             
-            # Add to conversation history
-            conversation_history.append({
-                "role": "user",
-                "content": query
-            })
-            conversation_history.append({
-                "role": "assistant",
-                "content": response.answer
-            })
-            
-            # Keep only last 10 messages for context
-            if len(conversation_history) > 10:
-                conversation_history = conversation_history[-10:]
-                
         except Exception as e:
             print(f"\n❌ Error: {str(e)}")
             logger.error(f"Query failed: {str(e)}")
@@ -565,33 +692,33 @@ def interactive_chat(chatbot: DocumentChatbot) -> None:
 
 # ========== Main Entry Point ==========
 def main():
-    """
-    Main function for running the chatbot.
-    """
-    import sys
-    import json
+    """Main function for running the chatbot."""
     
     print("\n" + "=" * 80)
-    print("DOCUMENTATION CHATBOT - RAG System")
+    print("DOCUMENTATION CHATBOT - RAG System with Hybrid Search")
     print("=" * 80)
     
     # Initialize chatbot
     print("\n📦 Initializing chatbot...")
-    chatbot = DocumentChatbot(
-        embedding_provider="sentence_transformers",  # or "openai"
-        vector_store_provider="pinecone"  # or "chroma"
-    )
-    print("✓ Chatbot initialized\n")
+    try:
+        chatbot = DocumentChatbot(
+            embedding_provider="sentence_transformers",
+            vector_store_provider="pinecone"
+        )
+        print("✅ Chatbot initialized\n")
+    except Exception as e:
+        print(f"❌ Failed to initialize: {str(e)}")
+        sys.exit(1)
     
     # Check health
     print("🏥 Checking system health...")
     health = chatbot.health_check()
-    all_healthy = all(health.values())
+    all_healthy = all(v for v in health.values() if v is not None)
     
     if not all_healthy:
         print("⚠️  Warning: Some services are not healthy!")
         for service, status in health.items():
-            if not status:
+            if status is False:
                 print(f"   ✗ {service} is not responding")
         
         proceed = input("\nDo you want to continue anyway? (y/n): ")
@@ -599,7 +726,7 @@ def main():
             print("Exiting...")
             sys.exit(1)
     else:
-        print("✓ All systems operational\n")
+        print("✅ All systems operational\n")
     
     # Main menu
     while True:
@@ -609,48 +736,51 @@ def main():
         print("  2. Query chatbot")
         print("  3. Interactive chat")
         print("  4. View statistics")
-        print("  5. Exit")
+        print("  5. Rebuild BM25 index")
+        print("  6. Exit")
         print("=" * 80)
         
-        choice = input("\nSelect option (1-5): ").strip()
+        choice = input("\nSelect option (1-6): ").strip()
         
         if choice == '1':
             # Ingest documents
             file_path = input("Enter file path (or directory): ").strip()
             
             if os.path.isfile(file_path):
-                # Single file
                 try:
                     result = chatbot.ingest_document(file_path)
-                    print(f"✓ Document ingested: {result.document_id}")
+                    print(f"✅ Document ingested: {result.document_id}")
                 except Exception as e:
-                    print(f"✗ Ingestion failed: {str(e)}")
+                    print(f"❌ Ingestion failed: {str(e)}")
                     
             elif os.path.isdir(file_path):
-                # Directory
                 files = [
                     os.path.join(file_path, f) 
                     for f in os.listdir(file_path) 
-                    if f.endswith(tuple(settings.ALLOWED_EXTENSIONS))
+                    if any(f.endswith(ext) for ext in settings.ALLOWED_EXTENSIONS)
                 ]
                 print(f"Found {len(files)} documents")
-                results = ingest_multiple_documents(chatbot, files)
-                print(f"✓ Ingested {len(results)} documents")
+                if files:
+                    results = ingest_multiple_documents(chatbot, files)
+                    print(f"✅ Ingested {len(results)}/{len(files)} documents")
+                else:
+                    print("❌ No valid documents found")
             else:
-                print("✗ Invalid path")
+                print("❌ Invalid path")
         
         elif choice == '2':
             # Single query
             query = input("Enter your question: ").strip()
             if query:
                 try:
-                    response = chatbot.query(query)
+                    response = chatbot.query(query, streaming=False)
                     print("\n" + "=" * 80)
                     print("Answer:")
+                    print("-" * 80)
                     print(response.answer)
                     print("=" * 80)
                 except Exception as e:
-                    print(f"✗ Query failed: {str(e)}")
+                    print(f"❌ Query failed: {str(e)}")
         
         elif choice == '3':
             # Interactive chat
@@ -663,12 +793,21 @@ def main():
             print(json.dumps(stats, indent=2))
         
         elif choice == '5':
+            # Rebuild BM25
+            if settings.ENABLE_HYBRID_SEARCH:
+                print("\n🔄 Rebuilding BM25 index...")
+                result = chatbot.vector_store.rebuild_bm25_index()
+                print(json.dumps(result, indent=2))
+            else:
+                print("❌ Hybrid search is not enabled")
+        
+        elif choice == '6':
             # Exit
             print("\nGoodbye!")
             break
         
         else:
-            print("Invalid option")
+            print("❌ Invalid option")
 
 
 if __name__ == "__main__":

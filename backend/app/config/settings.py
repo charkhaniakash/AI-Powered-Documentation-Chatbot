@@ -148,6 +148,37 @@ class Settings(BaseSettings):
         default="INFO",
         description="Logging level (DEBUG, INFO, WARNING, ERROR)"
     )
+
+    # Add to Settings class (around line 90)
+
+    # ========== Hybrid Search Settings ==========
+    # Enable hybrid search (BM25 + Vector)
+    ENABLE_HYBRID_SEARCH: bool = Field(
+        default=True,
+        description="Enable hybrid search with BM25"
+    )
+
+    # Use RRF or weighted fusion
+    USE_RRF: bool = Field(
+        default=True,
+        description="Use Reciprocal Rank Fusion (True) or weighted fusion (False)"
+    )
+
+    # Vector search weight (for weighted fusion)
+    VECTOR_WEIGHT: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Weight for vector search in weighted fusion"
+    )
+
+    # BM25 weight (for weighted fusion)
+    BM25_WEIGHT: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight for BM25 search in weighted fusion"
+    )
     
     class Config:
         """
