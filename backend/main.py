@@ -297,6 +297,44 @@ class DocumentChatbot:
                 for i, rc in enumerate(retrieved_chunks[:3], 1):
                     logger.info(f"     [{i}] {rc.chunk.metadata.filename} (score: {rc.score:.3f})")
             
+            # ========== NEW: Step 3 - Contextual Compression ==========
+            if settings.ENABLE_CONTEXTUAL_COMPRESSION and retrieved_chunks:
+                logger.info("🗜️  Step 3/4: Applying contextual compression...")
+                
+                # Import compressor (lazy import)
+                from app.services.contextual_compressor import get_contextual_compressor
+                
+                # Get compressor instance
+                compressor = get_contextual_compressor()
+                
+                # Store original for comparison
+                original_chunks = retrieved_chunks.copy()
+                
+                # Compress chunks
+                retrieved_chunks = compressor.compress_retrieved_chunks(
+                    query=query,
+                    retrieved_chunks=retrieved_chunks,
+                    preserve_order=True
+                )
+                
+                # Log compression stats
+                if retrieved_chunks:
+                    stats = compressor.get_compression_stats(original_chunks, retrieved_chunks)
+                    logger.info(
+                        f"   ✓ Compression: {stats['compression_ratio_percent']:.1f}% reduction "
+                        f"({stats['original_total_chars']:,} → {stats['compressed_total_chars']:,} chars)"
+                    )
+                else:
+                    logger.warning("   ⚠️  All chunks filtered out by compression!")
+                    # Fallback to original chunks
+                    retrieved_chunks = original_chunks
+                    logger.info("   ℹ  Using original uncompressed chunks")
+            else:
+                if not settings.ENABLE_CONTEXTUAL_COMPRESSION:
+                    logger.info("ℹ️  Step 3/4: Contextual compression disabled (skipped)")
+                else:
+                    logger.info("ℹ️  Step 3/4: No chunks to compress (skipped)")
+            
             # Check if we have any results
             if not retrieved_chunks:
                 logger.warning("⚠️  No relevant chunks found")
@@ -340,7 +378,8 @@ class DocumentChatbot:
                         "original_query": original_query,
                         "mode": "streaming",
                         "hybrid_search": settings.ENABLE_HYBRID_SEARCH,
-                        "fusion_method": "RRF" if settings.USE_RRF else "weighted"
+                        "fusion_method": "RRF" if settings.USE_RRF else "weighted",
+                        "compression_enabled": settings.ENABLE_CONTEXTUAL_COMPRESSION  # ADD THIS LINE
                     }
                 )
             else:
@@ -354,6 +393,7 @@ class DocumentChatbot:
                 # Add metadata
                 response.metadata["hybrid_search"] = settings.ENABLE_HYBRID_SEARCH
                 response.metadata["fusion_method"] = "RRF" if settings.USE_RRF else "weighted"
+                response.metadata["compression_enabled"] = settings.ENABLE_CONTEXTUAL_COMPRESSION  # ADD THIS LINE
                 
                 if not include_sources:
                     response.sources = []

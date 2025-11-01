@@ -179,6 +179,23 @@ class Settings(BaseSettings):
         le=1.0,
         description="Weight for BM25 search in weighted fusion"
     )
+
+    # ========== Contextual Compression Settings ==========
+    ENABLE_CONTEXTUAL_COMPRESSION: bool = Field(
+        default=True,
+        description="Enable contextual compression"
+    )
+    COMPRESSION_RELEVANCE_THRESHOLD: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Relevance threshold for compression"
+    )
+    COMPRESSION_MAX_SENTENCES: int = Field(
+        default=5,
+        ge=1,
+        description="Maximum sentences per chunk for compression"
+    )
     
     class Config:
         """
@@ -191,6 +208,7 @@ class Settings(BaseSettings):
         extra = "ignore"
         # Make the settings case-insensitive for env vars
         case_sensitive = False
+        
 
 
 # ========== Global Settings Instance ==========
