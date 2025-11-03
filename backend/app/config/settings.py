@@ -252,6 +252,21 @@ class Settings(BaseSettings):
         default="rag_cache",
         description="Prefix for all cache keys"
     )
+
+    ENABLE_DUPLICATE_DETECTION: bool = Field(
+    default=True,
+    description="Enable duplicate document detection"
+)
+
+    DUPLICATE_DETECTION_METHOD: str = Field(
+        default="both",  # "file_hash", "content_hash", or "both"
+        description="Duplicate detection method"
+    )
+
+    ALLOW_DUPLICATE_FILENAMES: bool = Field(
+        default=False,
+        description="Allow same filename if content differs"
+    )
     
     class Config:
         """

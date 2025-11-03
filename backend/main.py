@@ -31,7 +31,7 @@ from app.utils.helpers import (
     ProgressTracker,
     setup_logging
 )
-
+from app.services.duplicate_detector import get_duplicate_detector
 from app.services.cache_manager import get_cache_manager
 
 # ========== Setup Logging ==========
@@ -155,6 +155,41 @@ class DocumentChatbot:
         # Use filename from path if not provided
         if filename is None:
             filename = os.path.basename(file_path)
+
+        
+        # ========== DUPLICATE DETECTION ==========
+
+        duplicate_detector = get_duplicate_detector()
+
+        # Read file content for duplicate check
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+
+        # Check if document is duplicate BEFORE processing
+        is_duplicate, existing_doc_id, detection_method = duplicate_detector.check_duplicate_document(
+            file_path=file_path,
+            text_content=""  # We'll check after extraction
+        )
+
+        # If exact file duplicate found, skip processing
+        if is_duplicate and detection_method == "file_hash":
+            logger.warning(
+                f"⚠️  DUPLICATE FILE DETECTED!\n"
+                f"   File: {filename}\n"
+                f"   Existing Document ID: {existing_doc_id}\n"
+                f"   Action: Skipping upload (returning existing document)"
+            )
+            
+            # Get existing metadata
+            existing_metadata = duplicate_detector.get_document_metadata(existing_doc_id)
+            
+            return UploadResponse(
+                job_id=existing_doc_id,
+                document_id=existing_doc_id,
+                message=f"Document '{filename}' already exists (duplicate file detected)",
+                status=ProcessingStatus.COMPLETED,
+                metadata=existing_metadata
+            )
         
         try:
             # Step 1: Validate and process file
@@ -166,6 +201,33 @@ class DocumentChatbot:
                 file_type=file_type
             )
             logger.info(f"   ✓ Extracted {len(text):,} characters from {filename}")
+
+            # ========== CHECK CONTENT DUPLICATE (after text extraction) ==========
+            is_duplicate, existing_doc_id, detection_method = duplicate_detector.check_duplicate_document(
+                file_path=file_path,
+                text_content=text
+            )
+
+            if is_duplicate:
+                logger.warning(
+                    f"⚠️  DUPLICATE CONTENT DETECTED!\n"
+                    f"   File: {filename}\n"
+                    f"   Existing Document ID: {existing_doc_id}\n"
+                    f"   Detection Method: {detection_method}\n"
+                    f"   Action: Skipping upload (returning existing document)"
+                )
+                
+                existing_metadata = duplicate_detector.get_document_metadata(existing_doc_id)
+                
+                return UploadResponse(
+                    job_id=existing_doc_id,
+                    document_id=existing_doc_id,
+                    message=f"Document '{filename}' already exists (duplicate content detected)",
+                    status=ProcessingStatus.COMPLETED,
+                    metadata=existing_metadata
+                )
+
+
             
             # Step 2: Chunk the text
             logger.info(f"✂️  Step 2/4: Chunking text (strategy: {chunking_strategy})...")
@@ -207,6 +269,22 @@ class DocumentChatbot:
             logger.info("=" * 80)
             logger.info(f"✅ INGESTION COMPLETE: {metadata.document_id}")
             logger.info("=" * 80 + "\n")
+
+
+            # ========== REGISTER NEW DOCUMENT ==========
+            duplicate_detector.register_new_document(
+                file_path=file_path,
+                text_content=text,
+                document_id=metadata.document_id,
+                metadata={
+                    "filename": filename,
+                    "file_type": file_type.value,
+                    "file_size": metadata.file_size,
+                    "chunk_count": len(chunks)
+                }
+            )
+
+            logger.info(f"✓ Document registered in duplicate detector")
             
             return upload_response
             
