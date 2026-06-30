@@ -48,10 +48,11 @@ class Settings(BaseSettings):
         description="Name of the Pinecone index"
     )
     
-    # Dimension of embedding vectors (Groq's embedding model dimension)
-    # This MUST match the embedding model's output dimension
+    # Dimension of embedding vectors
+    # This MUST match the embedding model's output dimension.
+    # all-MiniLM-L6-v2 (the default sentence-transformers model) outputs 384.
     EMBEDDING_DIMENSION: int = Field(
-        default=1536,
+        default=384,
         description="Dimension of embedding vectors"
     )
     

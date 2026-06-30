@@ -5,6 +5,7 @@ Uses Groq API to create embeddings for semantic search.
 
 # Import necessary libraries
 import logging  # For logging
+import os  # For environment variables
 from typing import List, Dict, Any, Optional  # For type hints
 import time  # For retry delays
 import json  # For JSON operations
