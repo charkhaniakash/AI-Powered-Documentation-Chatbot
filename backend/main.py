@@ -5,6 +5,7 @@ Coordinates all services to implement the complete RAG system.
 
 # Import necessary libraries
 import logging  # For logging
+import json  # For JSON serialization
 from typing import List, Dict, Any, Optional  # For type hints
 import os  # For environment variables
 
@@ -569,7 +570,6 @@ def main():
     Main function for running the chatbot.
     """
     import sys
-    import json
     
     print("\n" + "=" * 80)
     print("DOCUMENTATION CHATBOT - RAG System")
