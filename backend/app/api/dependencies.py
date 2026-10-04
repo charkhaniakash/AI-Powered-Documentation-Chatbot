@@ -184,12 +184,16 @@ def check_rate_limit(
 
 
 # ========== Authentication (Placeholder) ==========
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
-async def verify_api_key(x_api_key: str = Header(None)) -> str:
+async def verify_api_key(request: Request, x_api_key: str = Header(None)) -> str:
     """
-    Verify API key from request header.
+    Verify API key and enforce rate limiting.
     
+    Checks:
+    1. Rate limit per IP address
+    2. API key from request header (placeholder)
+
     Usage:
     @app.get("/protected")
     async def protected_endpoint(api_key: str = Depends(verify_api_key)):
@@ -201,14 +205,30 @@ async def verify_api_key(x_api_key: str = Header(None)) -> str:
     }
     
     Args:
+        request: The request object (for client IP)
         x_api_key: API key from request header
         
     Returns:
         API key if valid
         
     Raises:
-        HTTPException: If API key is invalid
+        HTTPException: If rate limit exceeded or API key is invalid
     """
+    # Enforce rate limiting
+    if not request.client:
+        logger.warning("Could not determine client IP. This might be a server configuration issue.")
+        raise HTTPException(
+            status_code=500,
+            detail="Server configuration error: could not determine client IP."
+        )
+
+    client_ip = request.client.host
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please try again later."
+        )
+
     # For now, this is a placeholder
     # In production, check against database
     

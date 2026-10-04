@@ -16,6 +16,7 @@ from app.utils.helpers import setup_logging
 
 # Import API routes (we'll create these next)
 from app.api.routes import upload, query, documents, health
+from app.api import dependencies
 
 # ========== Setup Logging ==========
 setup_logging(log_level=settings.LOG_LEVEL)
@@ -156,7 +157,7 @@ async def shutdown_event():
     - Cleanup resources
     """
     logger.info("Shutting down API...")
-    # Add cleanup code here if needed
+    dependencies.cleanup_resources()
 
 
 # ========== Global Exception Handler ==========
