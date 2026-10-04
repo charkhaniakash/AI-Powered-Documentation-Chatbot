@@ -1,10 +1,3 @@
-"""
-FastAPI dependencies - shared resources and dependency injection.
-
-Dependency Injection = A way to share resources (like database connections)
-across multiple endpoints without recreating them every time.
-"""
-
 from typing import Generator  # For type hints
 from functools import lru_cache  # For caching
 import logging  # For logging
@@ -137,6 +130,7 @@ def generate_request_id() -> str:
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Dict
+from fastapi import Header, HTTPException, Request # Moved Request import here
 
 # Store request counts: {ip_address: [(timestamp, count), ...]}
 _request_tracker: Dict[str, list] = defaultdict(list)
@@ -184,11 +178,13 @@ def check_rate_limit(
 
 
 # ========== Authentication (Placeholder) ==========
-from fastapi import Header, HTTPException
 
-async def verify_api_key(x_api_key: str = Header(None)) -> str:
+async def verify_api_key(
+    request: Request,
+    x_api_key: str = Header(None)
+) -> str:
     """
-    Verify API key from request header.
+    Verify API key from request header and apply rate limiting.
     
     Usage:
     @app.get("/protected")
@@ -201,14 +197,22 @@ async def verify_api_key(x_api_key: str = Header(None)) -> str:
     }
     
     Args:
+        request: The FastAPI Request object.
         x_api_key: API key from request header
         
     Returns:
         API key if valid
         
     Raises:
-        HTTPException: If API key is invalid
+        HTTPException: If API key is invalid or rate limit exceeded
     """
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please try again later."
+        )
+
     # For now, this is a placeholder
     # In production, check against database
     
