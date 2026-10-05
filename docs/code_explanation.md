@@ -73,7 +73,7 @@ The extracted text is normalized through the internal helper `_clean_text`:
 To ensure context fits within LLM context windows and captures focused meaning, documents must be chunked. The system implements a recursive character splitter (`RecursiveCharacterTextSplitter`) which splits based on priority characters (`["\n\n", "\n", " ", ""]`) to keep paragraphs and sentences whole wherever possible.
 
 ### Embedding Generator (`embedding.py`)
-The `EmbeddingGenerator` class converts text chunks into mathematical vectors capturing semantic meanings. 
+The `EmbeddingGenerator` class converts text chunks into mathematical vectors capturing semantic meanings.
 
 - **Providers**:
   - **Sentence Transformers (Default, Local & Free)**: Employs `sentence-transformers/all-MiniLM-L6-v2`. This model produces dense vectors with **384 dimensions**. It is fast and runs completely locally without API dependencies.
@@ -137,3 +137,25 @@ The terminal UI provides a user-friendly way to interact with the system:
 - **Commands**:
   - `/stats`: Displays index metadata, embedding dimension config, and current chunk settings.
   - `/health`: Performs self-diagnostics on the database connection, local embedding generator, and remote Groq API LLM service.
+
+---
+
+## 6. FastAPI Web Server (`api_server.py`)
+
+The project exposes its core capabilities as a RESTful API via a high-performance **FastAPI** web server (`backend/api_server.py`).
+
+### Core Features
+1. **Server Initialization**:
+   - Instantiates the central `FastAPI` application utilizing global configuration parameters defined in `app.config.settings`.
+   - Generates comprehensive OpenAPI documentation and interactive swagger interfaces exposed at `/docs` and `/redoc`.
+2. **CORS Middleware**:
+   - Registers standard `CORSMiddleware` to authorize and safely handle cross-origin HTTP requests from front-end applications (such as React), configuring allowed origins, credentials, HTTP methods, and headers.
+3. **Route Integration**:
+   - Modularizes API routing by registering individual specialized routers under a centralized `/api/v1` prefix to organize endpoints:
+     - `/health`: Service check endpoint for verifying system self-diagnostics, database connection, and Groq/LLM status.
+     - `/upload`: Facilitates document upload, processing, chunking, and indexation.
+     - `/query`: Runs search vectors against the vector database and generates LLM-assisted answers with structured citations.
+     - `/documents`: Performs administrative actions including listing indexed items, deleting documents, or viewing details.
+4. **Server Lifecycle and Execution**:
+   - Uses event decorators `@app.on_event("startup")` and `@app.on_event("shutdown")` to handle setup tasks (such as validating server-side configuration, initialization routines) and safe connection terminations.
+   - Deployed on **Uvicorn**, a lightning-fast ASGI web server, leveraging its auto-reload capability during local development.
