@@ -184,9 +184,9 @@ def check_rate_limit(
 
 
 # ========== Authentication (Placeholder) ==========
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
-async def verify_api_key(x_api_key: str = Header(None)) -> str:
+async def verify_api_key(request: Request, x_api_key: str = Header(None)) -> str:
     """
     Verify API key from request header.
     
@@ -201,14 +201,23 @@ async def verify_api_key(x_api_key: str = Header(None)) -> str:
     }
     
     Args:
+        request: FastAPI Request object
         x_api_key: API key from request header
         
     Returns:
         API key if valid
         
     Raises:
-        HTTPException: If API key is invalid
+        HTTPException: If API key is invalid or rate limit exceeded
     """
+    # Rate limit check
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please try again later."
+        )
+        
     # For now, this is a placeholder
     # In production, check against database
     
